@@ -1,17 +1,11 @@
-# Myles Quant v0.3.0
+# Myles Quant v0.4.0
 
-Research + simulated forward-paper trading for GMX markets on Arbitrum.
+GMX market research, Auto Bot forward-paper trading, and manual paper trade controls for the Myles Control Center.
 
-Current owner-selectable research markets: BTC/USD, ETH/USD, SOL/USD, XRP/USD, TAO/USD.
-
-Key changes from v0.2.2:
-- research/backtests separated from forward-paper account state
-- multi-market paper positions
-- explicit stop-loss and take-profit exits
-- total-equity daily-loss and drawdown guardrails
-- base + stressed-cost validation and walk-forward checks
-- GMX 1m candles for near-live market marks
-- authenticated dashboard configuration through the local Myles bridge
-- live signing remains hard locked; no private key is read and no live order is submitted
-
-The engine includes research assumptions for fees, slippage, price impact and holding costs. Those are deliberately visible/configurable and are not represented as exact future GMX execution costs.
+- Markets: BTC/USD, ETH/USD, SOL/USD, XRP/USD, TAO/USD.
+- Manual paper ticket: asset, long/short, simulated margin, leverage, stop-loss and take-profit.
+- Auto Bot: per-market on/off + strategy, master auto toggle, risk limits and validation.
+- Manual orders are rejected when they exceed the same paper risk/allocation caps used by the bot.
+- Manual positions are not closed by strategy flips; they close only via stop, target, owner close, or account emergency/risk halt.
+- Real-money signing remains hard-locked. No wallet/private key is created by this release.
+- Funding UI describes the future Arbitrum/USDC flow but will not invent a deposit address.

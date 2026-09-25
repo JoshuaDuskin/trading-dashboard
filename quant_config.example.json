@@ -7,17 +7,45 @@
   "poll_seconds": 60,
   "starting_equity": 10000,
   "market_settings": {
-    "BTC/USD": {"enabled": true, "paper_strategy": "trend_momentum"},
-    "ETH/USD": {"enabled": true, "paper_strategy": "trend_momentum"},
-    "SOL/USD": {"enabled": true, "paper_strategy": "trend_momentum"},
-    "XRP/USD": {"enabled": true, "paper_strategy": "trend_momentum"},
-    "TAO/USD": {"enabled": true, "paper_strategy": "trend_momentum"}
+    "BTC/USD": {
+      "enabled": true,
+      "paper_strategy": "trend_momentum",
+      "auto_trade_enabled": true
+    },
+    "ETH/USD": {
+      "enabled": true,
+      "paper_strategy": "trend_momentum",
+      "auto_trade_enabled": true
+    },
+    "SOL/USD": {
+      "enabled": true,
+      "paper_strategy": "trend_momentum",
+      "auto_trade_enabled": true
+    },
+    "XRP/USD": {
+      "enabled": true,
+      "paper_strategy": "trend_momentum",
+      "auto_trade_enabled": true
+    },
+    "TAO/USD": {
+      "enabled": true,
+      "paper_strategy": "trend_momentum",
+      "auto_trade_enabled": true
+    }
   },
   "strategies": {
-    "trend_momentum": {"enabled": true},
-    "mean_reversion": {"enabled": true}
+    "trend_momentum": {
+      "enabled": true
+    },
+    "mean_reversion": {
+      "enabled": true
+    }
   },
-  "paper": {"enabled": true, "emergency_stop": false},
+  "paper": {
+    "enabled": true,
+    "emergency_stop": false,
+    "auto_trading_enabled": true
+  },
   "risk": {
     "max_risk_per_trade_pct": 0.5,
     "max_notional_leverage": 1.5,
