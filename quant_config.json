@@ -1,0 +1,29 @@
+{
+  "chain_id": 42161,
+  "venue": "GMX Arbitrum",
+  "symbols": ["BTC/USD", "ETH/USD"],
+  "timeframe": "1h",
+  "history_limit": 1000,
+  "poll_seconds": 60,
+  "starting_equity": 10000,
+  "research_costs": {
+    "fee_bps_per_side": 10,
+    "slippage_bps_per_side": 5
+  },
+  "risk": {
+    "max_risk_per_trade_pct": 1.0,
+    "max_notional_leverage": 2.0,
+    "max_daily_loss_pct": 3.0,
+    "max_drawdown_pct": 10.0
+  },
+  "paper": {
+    "enabled": true,
+    "strategy": "trend_momentum",
+    "symbol": "BTC/USD"
+  },
+  "live_execution": {
+    "enabled": false,
+    "signing_enabled": false,
+    "reason": "Locked until owner explicitly enables a reviewed execution adapter."
+  }
+}

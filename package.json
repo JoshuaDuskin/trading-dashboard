@@ -1,0 +1,17 @@
+{
+  "name": "myles-quant",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "GMX Arbitrum research, backtest, and paper-trading telemetry for Myles Control Center",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node quant_service.mjs",
+    "once": "node quant_service.mjs --once",
+    "backtest": "node quant_service.mjs --backtest-only",
+    "self-test": "node quant_service.mjs --self-test"
+  },
+  "dependencies": {
+    "@gmx-io/sdk": "2.1.1"
+  }
+}
