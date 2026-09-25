@@ -1,12 +1,10 @@
 {
   "name": "myles-quant",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "GMX Arbitrum Oracle-API research, backtest, and paper-trading telemetry for Myles Control Center",
-  "engines": {
-    "node": ">=18"
-  },
+  "description": "GMX research, validation and simulated forward-paper engine for the Myles Control Center",
+  "engines": {"node": ">=18"},
   "scripts": {
     "start": "node quant_service.mjs",
     "once": "node quant_service.mjs --once",

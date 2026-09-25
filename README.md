@@ -1,19 +1,17 @@
-# Myles Quant v0.2.2
+# Myles Quant v0.3.0
 
-GMX Arbitrum research + backtest + paper-trading telemetry for the Myles Control Center.
+Research + simulated forward-paper trading for GMX markets on Arbitrum.
 
-- Real market data: GMX Oracle API candlesticks on Arbitrum via `/prices/candles`.
-- Backtests: trend-momentum and mean-reversion.
-- Walk-forward windows, configurable fee/slippage stress assumptions, drawdown and risk gates.
-- Paper state persists to `%LOCALAPPDATA%\MylesAI\data\quant_paper_state.json`.
-- Dashboard telemetry is written to `%LOCALAPPDATA%\MylesAI\data\trading_status.json`.
-- Live transaction signing is hard-locked in this release. No private key is read and no order is submitted.
+Current owner-selectable research markets: BTC/USD, ETH/USD, SOL/USD, XRP/USD, TAO/USD.
 
-Commands:
+Key changes from v0.2.2:
+- research/backtests separated from forward-paper account state
+- multi-market paper positions
+- explicit stop-loss and take-profit exits
+- total-equity daily-loss and drawdown guardrails
+- base + stressed-cost validation and walk-forward checks
+- GMX 1m candles for near-live market marks
+- authenticated dashboard configuration through the local Myles bridge
+- live signing remains hard locked; no private key is read and no live order is submitted
 
-```powershell
-npm install
-npm run self-test
-npm run once
-npm start
-```
+The engine includes research assumptions for fees, slippage, price impact and holding costs. Those are deliberately visible/configurable and are not represented as exact future GMX execution costs.
