@@ -1,8 +1,8 @@
-# Myles Quant v0.2
+# Myles Quant v0.2.2
 
 GMX Arbitrum research + backtest + paper-trading telemetry for the Myles Control Center.
 
-- Real market data: GMX SDK v2 / GMX API on Arbitrum.
+- Real market data: GMX Oracle API candlesticks on Arbitrum via `/prices/candles`.
 - Backtests: trend-momentum and mean-reversion.
 - Walk-forward windows, configurable fee/slippage stress assumptions, drawdown and risk gates.
 - Paper state persists to `%LOCALAPPDATA%\MylesAI\data\quant_paper_state.json`.

@@ -10,7 +10,7 @@ const STATE_FILE = path.join(DATA_DIR, 'quant_paper_state.json');
 const STATUS_FILE = path.join(DATA_DIR, 'trading_status.json');
 const CONFIG_FILE = path.join(__dirname, 'quant_config.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'quant_equity_history.json');
-const VERSION = '0.2.0';
+const VERSION = '0.2.2';
 
 function iso() { return new Date().toISOString(); }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -104,31 +104,47 @@ function normalizeCandles(raw) {
   return out;
 }
 
-async function loadGmxSdk(chainId) {
-  const mod = await import('@gmx-io/sdk/v2');
-  if (!mod?.GmxApiSdk) throw new Error('GmxApiSdk export was not found in @gmx-io/sdk/v2');
-  return new mod.GmxApiSdk({ chainId });
-}
+const GMX_ORACLE_BASES = {
+  42161: 'https://arbitrum-api.gmxinfra.io',
+  43114: 'https://avalanche-api.gmxinfra.io',
+};
 
-async function fetchGmxCandles(api, symbol, timeframe, limit) {
-  const raw = await api.fetchOhlcv({ symbol, timeframe, limit });
-  const candles = normalizeCandles(raw);
-  if (candles.length < 80) throw new Error(`GMX returned only ${candles.length} usable ${timeframe} candles for ${symbol}`);
-  return candles;
-}
-
-async function fetchTickerMap(api, symbols) {
+async function fetchJsonUrl(url, label) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const raw = await api.fetchMarketsTickers({ symbols });
-    const rows = Array.isArray(raw) ? raw : raw?.tickers || raw?.data || [];
-    const map = {};
-    for (const row of rows) {
-      const symbol = row?.symbol || row?.marketSymbol || row?.name;
-      const price = n(row?.price ?? row?.indexPrice ?? row?.lastPrice ?? row?.maxPrice ?? row?.minPrice, NaN);
-      if (symbol && Number.isFinite(price)) map[String(symbol)] = price;
+    const response = await fetch(url, {
+      headers: { accept: 'application/json', 'user-agent': 'MylesQuant/0.2.2' },
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      const body = text.replace(/\s+/g, ' ').slice(0, 500);
+      throw new Error(`${label}: HTTP ${response.status} ${response.statusText}${body ? ` - ${body}` : ''}`);
     }
-    return map;
-  } catch { return {}; }
+    try { return JSON.parse(text); }
+    catch { throw new Error(`${label}: API returned non-JSON content: ${text.slice(0, 300)}`); }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchGmxCandles(chainId, symbol, timeframe, limit) {
+  const base = GMX_ORACLE_BASES[Number(chainId)];
+  if (!base) throw new Error(`Unsupported GMX Oracle API chain id: ${chainId}`);
+  const tokenSymbol = String(symbol).split('/')[0].trim().toUpperCase();
+  const period = String(timeframe).trim();
+  const safeLimit = Math.max(80, Math.min(10000, Math.trunc(n(limit, 1000))));
+  const url = new URL(`${base}/prices/candles`);
+  url.searchParams.set('tokenSymbol', tokenSymbol);
+  url.searchParams.set('period', period);
+  url.searchParams.set('limit', String(safeLimit));
+  const raw = await fetchJsonUrl(url, `GMX Oracle ${tokenSymbol}/${period}`);
+  const candles = normalizeCandles(raw);
+  if (candles.length < 80) {
+    throw new Error(`GMX Oracle returned only ${candles.length} usable ${period} candles for ${tokenSymbol}`);
+  }
+  return candles;
 }
 
 export function backtest(candles, strategyName, config) {
@@ -235,7 +251,7 @@ function telemetry(config, candlesBySymbol, tickerMap, results, paper) {
   const paperEquity=round(paper.equity+(paper.position?.unrealized_pnl||0),2), starting=n(config.starting_equity,10000), pnl=round(paperEquity-starting,2);
   const latestMarkets=Object.entries(candlesBySymbol).map(([symbol,c])=>({symbol,price:round(n(tickerMap[symbol],c.at(-1)?.close),2),timestamp:c.at(-1)?.timestamp||null}));
   return {
-    schema_version:2,generated_at:iso(),engine:{name:'Myles Quant',version:VERSION,status:'running',venue:config.venue,chain_id:config.chain_id,data_source:'GMX API / SDK v2'},
+    schema_version:2,generated_at:iso(),engine:{name:'Myles Quant',version:VERSION,status:'running',venue:config.venue,chain_id:config.chain_id,data_source:'GMX Oracle API /prices/candles'},
     mode:'paper',execution_locked:true,live_execution:{enabled:false,signing_enabled:false,reason:config.live_execution?.reason||'Locked'},
     balance:paperEquity,equity:paperEquity,total_pnl:pnl,pnl_pct:round(pnl/starting*100,3),win_rate:completed?round(wins/completed*100,2):0,max_drawdown:round(maxDrawdown((paper.equity_curve||[]).map(x=>x.equity)),3),
     positions:paper.position?[{symbol:paper.position.symbol,side:paper.position.side,size_usd:paper.position.notional,entry_price:paper.position.entry,mark_price:paper.position.mark,unrealized_pnl:paper.position.unrealized_pnl,status:'paper'}]:[],
@@ -247,9 +263,9 @@ function telemetry(config, candlesBySymbol, tickerMap, results, paper) {
 }
 
 async function cycle({backtestOnly=false}={}) {
-  const config=loadConfig(); const api=await loadGmxSdk(config.chain_id); const candlesBySymbol={};
-  for(const symbol of config.symbols) candlesBySymbol[symbol]=await fetchGmxCandles(api,symbol,config.timeframe,config.history_limit);
-  const tickerMap=await fetchTickerMap(api,config.symbols); const results=[];
+  const config=loadConfig(); const candlesBySymbol={};
+  for(const symbol of config.symbols) candlesBySymbol[symbol]=await fetchGmxCandles(config.chain_id,symbol,config.timeframe,config.history_limit);
+  const tickerMap={}; const results=[];
   for(const symbol of config.symbols){for(const strategy of ['trend_momentum','mean_reversion']){const bt=backtest(candlesBySymbol[symbol],strategy,config);const wf=walkForward(candlesBySymbol[symbol],strategy,config);results.push({symbol,strategy,backtest:bt,walk_forward:wf});}}
   let paper=readJson(STATE_FILE,null)||createPaperState(config);
   if(!backtestOnly && config.paper?.enabled){const symbol=config.paper.symbol||config.symbols[0],strategy=config.paper.strategy||'trend_momentum';paper=updatePaper(paper,candlesBySymbol[symbol],strategy,config,symbol);writeJsonAtomic(STATE_FILE,paper);writeJsonAtomic(HISTORY_FILE,paper.equity_curve||[]);}
