@@ -9,7 +9,7 @@ const DATA_DIR = path.join(ROOT, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'quant_paper_state_v3.json');
 const STATUS_FILE = path.join(DATA_DIR, 'trading_status.json');
 const CONFIG_FILE = path.join(__dirname, 'quant_config.json');
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const VALID_PERIODS = new Set(['1m','5m','15m','1h','4h','1d']);
 const SUPPORTED_RESEARCH_MARKETS = ['BTC/USD','ETH/USD','SOL/USD','XRP/USD','TAO/USD'];
 
@@ -29,6 +29,7 @@ const DEFAULT_CONFIG = {
     'TAO/USD': { enabled: true, auto_trade_enabled: true, paper_strategy: 'trend_momentum' },
   },
   strategies: {
+    scalp_trend: { enabled: true },
     trend_momentum: { enabled: true },
     mean_reversion: { enabled: true },
   },
@@ -91,7 +92,7 @@ function normalizeConfig(raw){
   cfg.market_settings=cfg.market_settings||{};
   for(const sym of SUPPORTED_RESEARCH_MARKETS){
     const row=cfg.market_settings[sym]||{};
-    cfg.market_settings[sym]={enabled:row.enabled!==false,auto_trade_enabled:row.auto_trade_enabled!==false,paper_strategy:['trend_momentum','mean_reversion'].includes(row.paper_strategy)?row.paper_strategy:'trend_momentum'};
+    cfg.market_settings[sym]={enabled:row.enabled!==false,auto_trade_enabled:row.auto_trade_enabled!==false,paper_strategy:['scalp_trend','trend_momentum','mean_reversion'].includes(row.paper_strategy)?row.paper_strategy:'trend_momentum'};
   }
   for(const key of Object.keys(cfg.market_settings)) if(!SUPPORTED_RESEARCH_MARKETS.includes(key)) delete cfg.market_settings[key];
   cfg.risk.max_risk_per_trade_pct=clamp(n(cfg.risk.max_risk_per_trade_pct,.5),.05,5);
@@ -126,7 +127,21 @@ export function rsiSeries(values,period=14){ const out=Array(values.length).fill
 export function maxDrawdown(equity){ let peak=-Infinity,worst=0; for(const v of equity){peak=Math.max(peak,v);if(peak>0)worst=Math.max(worst,(peak-v)/peak);} return worst*100; }
 export function signalTrendMomentum(candles,index){ if(index<60)return 0; const closes=candles.slice(0,index+1).map(c=>c.close),fast=emaSeries(closes,20).at(-1),slow=emaSeries(closes,50).at(-1),rsi=rsiSeries(closes,14).at(-1); if(fast==null||slow==null||rsi==null)return 0; if(fast>slow&&rsi>=52&&rsi<=74)return 1; if(fast<slow&&rsi<=48&&rsi>=26)return-1; return 0; }
 export function signalMeanReversion(candles,index){ if(index<40)return 0; const closes=candles.slice(0,index+1).map(c=>c.close),ma=sma(closes,30),rsi=rsiSeries(closes,14).at(-1),price=closes.at(-1); if(!ma||rsi==null)return 0; const deviation=(price-ma)/ma; if(deviation<-.025&&rsi<35)return 1; if(deviation>.025&&rsi>65)return-1; return 0; }
-function strategySignal(name,candles,index){ return name==='mean_reversion'?signalMeanReversion(candles,index):signalTrendMomentum(candles,index); }
+export function signalScalpTrend(candles,index){
+  if(index<55)return 0;
+  const closes=candles.slice(0,index+1).map(c=>c.close);
+  const e9=emaSeries(closes,9).at(-1),e21=emaSeries(closes,21).at(-1),e50=emaSeries(closes,50).at(-1),rsi=rsiSeries(closes,14).at(-1);
+  const c=candles[index],prev=candles[index-1];
+  if([e9,e21,e50,rsi].some(v=>v==null)||!prev)return 0;
+  if(e9>e21&&e21>e50&&rsi>=52&&rsi<=72&&c.close>prev.close)return 1;
+  if(e9<e21&&e21<e50&&rsi<=48&&rsi>=28&&c.close<prev.close)return -1;
+  return 0;
+}
+function strategySignal(name,candles,index){
+  if(name==='scalp_trend')return signalScalpTrend(candles,index);
+  if(name==='mean_reversion')return signalMeanReversion(candles,index);
+  return signalTrendMomentum(candles,index);
+}
 
 function normalizeCandles(raw){ const rows=Array.isArray(raw)?raw:raw?.candles; if(!Array.isArray(rows))return[]; const out=rows.map(c=>Array.isArray(c)?{timestamp:n(c[0]),open:n(c[1]),high:n(c[2]),low:n(c[3]),close:n(c[4])}:{timestamp:n(c.timestamp),open:n(c.open),high:n(c.high),low:n(c.low),close:n(c.close)}).filter(c=>c.timestamp>0&&c.open>0&&c.high>0&&c.low>0&&c.close>0); out.sort((a,b)=>a.timestamp-b.timestamp); return out; }
 const GMX_ORACLE_BASES={42161:'https://arbitrum-api.gmxinfra.io'};
@@ -140,6 +155,17 @@ function exitFill(mark,direction,cost){ return mark*(1-direction*(cost.slip+cost
 function positionSize(equity,config,entry){ const riskPct=n(config.risk.max_risk_per_trade_pct,.5)/100,stopPct=n(config.risk.stop_loss_pct,1.5)/100,lev=n(config.risk.max_notional_leverage,1.5),alloc=n(config.risk.max_market_allocation_pct,35)/100; const riskBudget=equity*riskPct;const byRisk=riskBudget/Math.max(.0001,stopPct);const notional=Math.min(equity*lev,equity*alloc,byRisk);return {notional,units:notional/entry,risk_budget:riskBudget}; }
 function stopTarget(entry,direction,config){const s=n(config.risk.stop_loss_pct,1.5)/100,t=n(config.risk.take_profit_pct,3)/100;return{stop:entry*(1-direction*s),target:entry*(1+direction*t)};}
 function intrabarExit(position,candle){ if(position.direction>0){const stopHit=candle.low<=position.stop,targetHit=candle.high>=position.target;if(stopHit)return{reason:targetHit?'stop_and_target_same_candle_conservative_stop':'stop_loss',raw:position.stop};if(targetHit)return{reason:'take_profit',raw:position.target};}else{const stopHit=candle.high>=position.stop,targetHit=candle.low<=position.target;if(stopHit)return{reason:targetHit?'stop_and_target_same_candle_conservative_stop':'stop_loss',raw:position.stop};if(targetHit)return{reason:'take_profit',raw:position.target};}return null; }
+function manualMarkExit(position,mark){
+  if(!Number.isFinite(mark)||mark<=0)return null;
+  if(position.direction>0){
+    if(mark<=position.stop)return{reason:'stop_loss',raw:mark};
+    if(mark>=position.target)return{reason:'take_profit',raw:mark};
+  }else{
+    if(mark>=position.stop)return{reason:'stop_loss',raw:mark};
+    if(mark<=position.target)return{reason:'take_profit',raw:mark};
+  }
+  return null;
+}
 function holdingCost(position,exitTs,cost){const days=Math.max(0,(exitTs-position.opened_ts)/86400);return position.notional*cost.holding*days;}
 function closeCalc(position,rawExit,exitTs,cost){const exit=exitFill(rawExit,position.direction,cost),gross=position.direction*position.units*(exit-position.entry),exitFee=Math.abs(position.units*exit)*cost.fee,hold=holdingCost(position,exitTs,cost),net=gross-position.entry_fee-exitFee-hold;return{exit,gross,exit_fee:exitFee,holding_cost:hold,net};}
 
@@ -182,9 +208,11 @@ function updatePaper(state,candlesBySymbol,latest,config){
     const signal=strategySignal(strategy,candles,candles.length-1);
     const p=state.positions[symbol];let exitedThisCandle=false;
     if(p){
-      let ex=intrabarExit(p,c);
+      // Manual positions must never replay the whole strategy candle after entry.
+      // Their stop/target checks use the fresh GMX market mark only.
+      let ex=p.source==='manual'?manualMarkExit(p,n(latest[symbol]?.price,c.close)):intrabarExit(p,c);
       if(!ex&&p.source!=='manual'&&signal!==p.direction)ex={reason:'signal_exit',raw:c.close};
-      if(ex){closePaperPosition(state,symbol,ex.raw,c.timestamp,cost,ex.reason);exitedThisCandle=true;}
+      if(ex){closePaperPosition(state,symbol,ex.raw,latest[symbol]?.timestamp||c.timestamp,cost,ex.reason);exitedThisCandle=true;}
     }
     eq=stateEquity(state,latest);
     const openCount=Object.keys(state.positions).length;
@@ -219,8 +247,11 @@ async function manualPaperAction(payload){
   }else if(action==='open'){
     if(!allowed)throw new Error('Unsupported market');
     if(config.paper.emergency_stop||state.halted)throw new Error(`Paper trading is halted${state.halt_reason?`: ${state.halt_reason}`:''}`);
-    if(state.positions[symbol])throw new Error(`${symbol} already has an open paper position`);
-    if(Object.keys(state.positions).length>=n(config.risk.max_concurrent_positions,2))throw new Error('Maximum simultaneous positions reached');
+    if(state.positions[symbol])throw new Error(`${symbol} already has an open paper position. Close that position before opening another ${symbol} trade.`);
+    // The configured simultaneous-position cap governs Auto Bot entries.
+    // Owner manual paper trades may use the remaining supported markets, while
+    // still obeying per-trade risk and per-market allocation limits.
+    if(Object.keys(state.positions).length>=SUPPORTED_RESEARCH_MARKETS.length)throw new Error('All supported markets already have open paper positions');
     const side=String(payload?.side||'').toLowerCase();if(!['long','short'].includes(side))throw new Error('Side must be long or short');
     const direction=side==='long'?1:-1;
     const mark=n(latest[symbol]?.price,0);if(mark<=0)throw new Error(`No current GMX mark for ${symbol}`);
@@ -241,19 +272,21 @@ async function manualPaperAction(payload){
     state.positions[symbol]={symbol,direction,side,entry:round(entry,6),units,notional:round(notional,2),margin_usd:round(margin,2),leverage:round(leverage,2),entry_fee:entryFee,stop:round(stop,6),target:round(target,6),opened_ts:latest[symbol]?.timestamp||nowTs,mark,unrealized_pnl:0,strategy:'manual',source:'manual'};
   }else throw new Error('Unknown manual paper action');
   const eq=stateEquity(state,latest);state.peak_equity=Math.max(state.peak_equity||eq,eq);state.equity_curve=state.equity_curve||[];state.equity_curve.push({timestamp:nowTs,equity:round(eq,2)});state.equity_curve=state.equity_curve.slice(-2000);writeJsonAtomic(STATE_FILE,state);
-  const status=await cycle({backtestOnly:false});
+  // Refresh telemetry without letting the Auto Bot or the current strategy
+  // candle mutate the just-submitted manual order in the same request.
+  const status=await cycle({backtestOnly:true});
   return {ok:true,action,symbol:symbol||null,equity:status.equity,positions:status.positions};
 }
 
-function mathSelfTest(){const cfg=normalizeConfig(DEFAULT_CONFIG),cost={fee:0,slip:0,impact:0,holding:0};const p={direction:1,entry:100,units:10,notional:1000,entry_fee:0,opened_ts:0,stop:98.5,target:103};const c=closeCalc(p,102,3600,cost);const both=intrabarExit(p,{low:98,high:104});const size=positionSize(10000,cfg,100);const manualRisk=(1000*2*.015);const checks={long_pnl_exact:Math.abs(c.net-20)<1e-9,conservative_same_candle_stop:both?.reason==='stop_and_target_same_candle_conservative_stop',risk_size_respects_leverage:size.notional<=15000.0001,risk_size_respects_allocation:size.notional<=3500.0001,manual_risk_math:Math.abs(manualRisk-30)<1e-9,live_hard_locked:cfg.live_execution.enabled===false&&cfg.live_execution.signing_enabled===false,valid_stop_target:p.stop<p.entry&&p.target>p.entry};return{pass:Object.values(checks).every(Boolean),checks};}
+function mathSelfTest(){const cfg=normalizeConfig(DEFAULT_CONFIG),cost={fee:0,slip:0,impact:0,holding:0};const p={direction:1,entry:100,units:10,notional:1000,entry_fee:0,opened_ts:0,stop:98.5,target:103};const c=closeCalc(p,102,3600,cost);const both=intrabarExit(p,{low:98,high:104});const size=positionSize(10000,cfg,100);const manualRisk=(1000*2*.015);const manualHold=manualMarkExit({...p,source:'manual'},100);const manualStop=manualMarkExit({...p,source:'manual'},98.4);const checks={long_pnl_exact:Math.abs(c.net-20)<1e-9,conservative_same_candle_stop:both?.reason==='stop_and_target_same_candle_conservative_stop',manual_does_not_replay_old_candle:manualHold===null,manual_mark_stop:manualStop?.reason==='stop_loss',risk_size_respects_leverage:size.notional<=15000.0001,risk_size_respects_allocation:size.notional<=3500.0001,manual_risk_math:Math.abs(manualRisk-30)<1e-9,live_hard_locked:cfg.live_execution.enabled===false&&cfg.live_execution.signing_enabled===false,valid_stop_target:p.stop<p.entry&&p.target>p.entry};return{pass:Object.values(checks).every(Boolean),checks};}
 
 function telemetry(config,candlesBySymbol,latest,results,paper,errors){const eq=stateEquity(paper,latest),start=n(paper.starting_equity,config.starting_equity),pnl=eq-start,allTrades=paper.trades||[],wins=paper.wins||0,positions=Object.values(paper.positions||{}).map(p=>({symbol:p.symbol,side:p.side,size_usd:p.notional,margin_usd:p.margin_usd??null,leverage:p.leverage??null,entry_price:p.entry,mark_price:p.mark,unrealized_pnl:p.unrealized_pnl,stop_loss:p.stop,take_profit:p.target,strategy:p.strategy,source:p.source||'auto',status:'SIMULATED PAPER'}));const strategyRows=results.map(r=>({name:r.strategy,status:r.validation.pass?'validated_candidate':'research',symbol:r.symbol,timeframe:config.timeframe,return_pct:r.base.return_pct,stress_return_pct:r.stress.return_pct,win_rate:r.base.win_rate,max_drawdown:r.base.max_drawdown,trades:r.base.trades,walk_forward_positive_windows:r.walk_forward.positive_windows??0,walk_forward_total_windows:r.walk_forward.total_windows??0,validation_pass:r.validation.pass,validation_checks:r.validation.checks}));const passCount=strategyRows.filter(r=>r.validation_pass).length;return{schema_version:3,generated_at:iso(),engine:{name:'Myles Quant',version:VERSION,status:'running',venue:config.venue,chain_id:config.chain_id,data_source:'GMX Oracle candles + 1m market marks'},account_type:'SIMULATED PAPER',mode:'paper',execution_locked:true,live_execution:config.live_execution,balance:round(eq,2),equity:round(eq,2),starting_equity:round(start,2),total_pnl:round(pnl,2),pnl_pct:round(pnl/Math.max(1,start)*100,3),win_rate:allTrades.length?round(wins/allTrades.length*100,2):0,max_drawdown:round(maxDrawdown((paper.equity_curve||[]).map(x=>x.equity)),3),positions,equity_curve:paper.equity_curve||[],markets:Object.entries(latest).map(([symbol,x])=>({symbol,price:round(x.price,8),timestamp:x.timestamp,source:'GMX 1m candle'})),market_errors:errors,strategies:strategyRows,backtests:results.map(r=>({strategy:r.strategy,market:r.symbol,period:`${candlesBySymbol[r.symbol]?.length||0} × ${config.timeframe}`,return_pct:r.base.return_pct,stress_return_pct:r.stress.return_pct,win_rate:r.base.win_rate,max_drawdown:r.base.max_drawdown,trades:r.base.trades,status:r.validation.pass?'PASS':'RESEARCH',walk_forward_positive_pct:r.validation.walk_forward_positive_pct})),recent_trades:allTrades.slice(-30),risk:{...config.risk,halted:!!paper.halted,halt_reason:paper.halt_reason,emergency_stop:!!config.paper.emergency_stop},assumptions:{...config.research_costs,stress_cost_multiplier:config.validation.stress_cost_multiplier,note:'Research assumptions; live GMX position fees, funding, borrowing, execution fee and net price impact vary with market state.'},configuration:{timeframe:config.timeframe,history_limit:config.history_limit,poll_seconds:config.poll_seconds,market_settings:config.market_settings,paper:config.paper},validation:{math:mathSelfTest(),candidate_pass_count:passCount,candidate_total:strategyRows.length,live_ready:false,live_ready_reasons:['Live execution adapter is not installed','Dedicated trading wallet is not configured','Forward-paper observation period and owner approval are still required']}};}
 
 async function cycle({backtestOnly=false}={}){const config=loadConfig(),candlesBySymbol={},latest={},errors={};const enabled=Object.entries(config.market_settings).filter(([,v])=>v.enabled).map(([s])=>s);for(const symbol of enabled){try{candlesBySymbol[symbol]=await fetchGmxCandles(config.chain_id,symbol,config.timeframe,config.history_limit);latest[symbol]=await fetchLatestPrice(config.chain_id,symbol);}catch(e){errors[symbol]=String(e?.message||e);}}
-  const results=[];for(const symbol of enabled){const candles=candlesBySymbol[symbol];if(!candles)continue;for(const strategy of ['trend_momentum','mean_reversion']){if(config.strategies[strategy]?.enabled===false)continue;const base=backtest(candles,strategy,config),stress=backtest(candles,strategy,config,{costMultiplier:n(config.validation.stress_cost_multiplier,2.5)}),wf=walkForward(candles,strategy,config),val=validationFor(base,stress,wf,config);results.push({symbol,strategy,base,stress,walk_forward:wf,validation:val});}}
+  const results=[];for(const symbol of enabled){const candles=candlesBySymbol[symbol];if(!candles)continue;for(const strategy of ['scalp_trend','trend_momentum','mean_reversion']){if(config.strategies[strategy]?.enabled===false)continue;const base=backtest(candles,strategy,config),stress=backtest(candles,strategy,config,{costMultiplier:n(config.validation.stress_cost_multiplier,2.5)}),wf=walkForward(candles,strategy,config),val=validationFor(base,stress,wf,config);results.push({symbol,strategy,base,stress,walk_forward:wf,validation:val});}}
   let paper=readJson(STATE_FILE,null);if(!paper||paper.version!==3)paper=createPaperState(config);if(!backtestOnly&&config.paper.enabled)paper=updatePaper(paper,candlesBySymbol,latest,config);writeJsonAtomic(STATE_FILE,paper);const status=telemetry(config,candlesBySymbol,latest,results,paper,errors);writeJsonAtomic(STATUS_FILE,status);return status;}
 
-export function selfTest(){const math=mathSelfTest(),candles=[];let price=100;for(let i=0;i<900;i++){price*=1+(Math.sin(i/17)*.002)+(i<450?.0004:-.00015);candles.push({timestamp:1700000000+i*3600,open:price*.998,high:price*1.006,low:price*.994,close:price});}const cfg=normalizeConfig(DEFAULT_CONFIG),a=backtest(candles,'trend_momentum',cfg),b=backtest(candles,'mean_reversion',cfg),wf=walkForward(candles,'trend_momentum',cfg);const checks={math:math.pass,trend:Number.isFinite(a.ending_equity),mean:Number.isFinite(b.ending_equity),walk_forward:(wf.total_windows||0)>0,live_locked:true};return{pass:Object.values(checks).every(Boolean),checks,math,sample:{trend:{return_pct:a.return_pct,trades:a.trades,max_drawdown:a.max_drawdown},mean:{return_pct:b.return_pct,trades:b.trades,max_drawdown:b.max_drawdown},walk_forward:wf}};}
+export function selfTest(){const math=mathSelfTest(),candles=[];let price=100;for(let i=0;i<900;i++){price*=1+(Math.sin(i/17)*.002)+(i<450?.0004:-.00015);candles.push({timestamp:1700000000+i*3600,open:price*.998,high:price*1.006,low:price*.994,close:price});}const cfg=normalizeConfig(DEFAULT_CONFIG),s=backtest(candles,'scalp_trend',cfg),a=backtest(candles,'trend_momentum',cfg),b=backtest(candles,'mean_reversion',cfg),wf=walkForward(candles,'trend_momentum',cfg);const checks={math:math.pass,scalp:Number.isFinite(s.ending_equity),trend:Number.isFinite(a.ending_equity),mean:Number.isFinite(b.ending_equity),walk_forward:(wf.total_windows||0)>0,live_locked:true};return{pass:Object.values(checks).every(Boolean),checks,math,sample:{scalp:{return_pct:s.return_pct,trades:s.trades,max_drawdown:s.max_drawdown},trend:{return_pct:a.return_pct,trades:a.trades,max_drawdown:a.max_drawdown},mean:{return_pct:b.return_pct,trades:b.trades,max_drawdown:b.max_drawdown},walk_forward:wf}};}
 
 async function main(){
   const rawArgs=process.argv.slice(2),args=new Set(rawArgs);
