@@ -1,9 +1,9 @@
 {
   "name": "myles-quant",
-  "version": "0.5.0",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
-  "description": "GMX research, scalp-terminal charts, manual paper execution, backtests and Auto Bot telemetry for Myles Control Center",
+  "description": "Myles Quant: GMX research, scalp terminal, owner-gated live execution, one-click subaccount signing, paper/live positions, and Auto Bot telemetry",
   "engines": {
     "node": ">=18"
   },
@@ -11,7 +11,21 @@
     "start": "node quant_service.mjs",
     "once": "node quant_service.mjs --once",
     "backtest": "node quant_service.mjs --backtest-only",
-    "self-test": "node quant_service.mjs --self-test"
+    "self-test": "node quant_service.mjs --self-test",
+    "live:status": "node gmx_live.mjs --status",
+    "live:self-test": "node gmx_live.mjs --self-test",
+    "live:daemon": "node gmx_live.mjs --daemon"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@gmx-io/sdk": "2.1.1",
+    "viem": "2.48.11",
+    "cross-fetch": "4.0.0",
+    "crypto-js": "4.2.0",
+    "graphql": "15.8.0",
+    "isomorphic-performance": "5.1.1",
+    "lodash": "4.18.1",
+    "query-string": "7.1.1",
+    "typescript": "5.4.2",
+    "universal-perf-hooks": "1.0.1"
+  }
 }
